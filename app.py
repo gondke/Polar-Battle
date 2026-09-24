@@ -42,28 +42,28 @@ def fmt_math(val):
 # =========================================================
 def generate_valid_target(origins):
     """
-    Generates target strictly on at least one polar arc (radius 1, 2, or 3),
-    within vector reach (<= 3 units) of AT LEAST two ships.
+    Requirement 3: Generates target such that with respect to EACH ship,
+    it is at an exact integer distance (1 cm, 2 cm, or 3 cm) and within range (<= 3 cm).
     """
     origin_keys = list(origins.keys())
     while True:
-        # Pick two primary ships that will have range to this target
-        primary_ships = np.random.choice(origin_keys, size=2, replace=False)
-        ref_ship = origins[primary_ships[0]]
-        
-        # Requirement 6: Target must sit on a polar arc (radius in {1, 2, 3})
-        r = np.random.choice([1.0, 2.0, 3.0])
+        # Pick reference ship and an integer radius in {1, 2, 3} cm
+        ref_ship = origins['A']
+        r_a = np.random.choice([1.0, 2.0, 3.0])
         theta_deg = np.random.choice(np.arange(10, 370, 10))
         theta_rad = np.radians(theta_deg)
         
-        target_pos = ref_ship + np.array([r * np.cos(theta_rad), r * np.sin(theta_rad)])
+        target_pos = ref_ship + np.array([r_a * np.cos(theta_rad), r_a * np.sin(theta_rad)])
         
-        # Requirement 3: Ensure target is in range (<= 3.0 units) of at least two ships
-        distances = [np.linalg.norm(target_pos - origins[k]) for k in origin_keys]
-        in_range_count = sum(1 for d in distances if d <= 3.001)
+        # Check distance to all ships
+        dist_b = np.linalg.norm(target_pos - origins['B'])
+        dist_c = np.linalg.norm(target_pos - origins['C'])
         
-        # Ensure target is not placed trivially close (< 0.5) to any ship
-        if in_range_count >= 2 and all(d >= 0.5 for d in distances):
+        # Check if dist_b and dist_c are integers within floating point tolerance and <= 3.0 cm
+        near_int_b = abs(dist_b - round(dist_b)) < 1e-3 and 1.0 <= round(dist_b) <= 3.0
+        near_int_c = abs(dist_c - round(dist_c)) < 1e-3 and 1.0 <= round(dist_c) <= 3.0
+        
+        if near_int_b and near_int_c:
             return target_pos
 
 if 'game_initialized' not in st.session_state:
@@ -71,16 +71,18 @@ if 'game_initialized' not in st.session_state:
     st.session_state.grid_max = 10
     
     # Requirement 1: Ships positioned at lattice (integer) coordinates
+    # Selected geometry where a shared integer point exists for r in {1, 2, 3}
     st.session_state.origins = {
-        'A': np.array([-3.0, -2.0]),
-        'B': np.array([2.0, 3.0]),
-        'C': np.array([-1.0, 3.0])
+        'A': np.array([-2.0, 0.0]),
+        'B': np.array([2.0, 0.0]),
+        'C': np.array([0.0, 2.0])
     }
     
-    # Requirement 3 & 6: Position target properly on polar arc
+    # Requirement 3: Position target at integer distance from ALL ships
     st.session_state.target = generate_valid_target(st.session_state.origins)
     st.session_state.shots = {'A': None, 'B': None, 'C': None}
     st.session_state.game_status = "IN_PROGRESS"
+    st.session_state.grid_density = 10  # Default 10 degrees separation
     st.session_state.game_initialized = True
 
 def reset_game():
@@ -106,13 +108,21 @@ st.button("Reset / New Target", on_click=reset_game)
 # =========================================================
 st.sidebar.header("Firing Control System")
 
-# Requirement 6: Select origin first
+# Requirement 4: Provision to change grid density
+angular_separation = st.sidebar.selectbox(
+    "⚙️ Polar Grid Angular Separation:",
+    options=[10, 20, 30, 60, 90],
+    index=0,
+    help="Changes the density of polar grid radial poles."
+)
+st.session_state.grid_density = angular_separation
+
 available_origins = [k for k, v in st.session_state.shots.items() if v is None]
 
 if available_origins and st.session_state.game_status == "IN_PROGRESS":
     chosen_origin = st.sidebar.selectbox("1. Select Ready Ship (Origin):", available_origins)
     
-    # Requirement 5: Dropdown menu for angle from 10° to 360° in steps of 10°
+    # Dropdown menu for angle from 10° to 360° in steps of 10°
     angle_options = list(range(10, 370, 10))
     angle_deg = st.sidebar.selectbox("2. Select Rotation Angle θ (degrees):", options=angle_options, index=8)
     angle_rad = np.radians(angle_deg)
@@ -123,11 +133,13 @@ if available_origins and st.session_state.game_status == "IN_PROGRESS":
         ["Standard Matrix A", "Transpose Matrix Aᵀ"]
     )
     
-    # Requirement 3: Vector magnitude capped at max 3 units
-    vector_len = st.sidebar.slider("4. Initial Vector Length (Max 3.0 units):", 0.5, 3.0, 2.0, step=0.5)
+    # Requirement 2: Vector initial default length is 1 cm (user can adjust up to 3 cm)
+    vector_len = st.sidebar.slider("4. Torpedo Vector Length (cm):", 1.0, 3.0, 1.0, step=0.5)
 
     # Calculate Matrix & Vector Transformation
     cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+    
+    # Requirement 2: Initial vector positioned horizontally (parallel to relative horizontal axis)
     base_vector = np.array([vector_len, 0.0])
     
     if transform_type == "Standard Matrix A":
@@ -141,7 +153,7 @@ if available_origins and st.session_state.game_status == "IN_PROGRESS":
 
     fired_vector = rot_matrix @ base_vector
 
-    # Requirement 4: Display live LaTeX textbook matrix multiplication
+    # Display live LaTeX textbook matrix multiplication
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🧮 Live Matrix Calculation")
     
@@ -177,14 +189,13 @@ if available_origins and st.session_state.game_status == "IN_PROGRESS":
         st.rerun()
 
 # =========================================================
-# HIGH-CONTRAST PLOTTING & ZOOMED INTERSECTING POLAR GRIDS
+# HIGH-CONTRAST PLOTTING & INTERSECTING POLAR GRIDS
 # =========================================================
 fig, ax = plt.subplots(figsize=(10, 10), facecolor="#0e1117")
 ax.set_facecolor("#0e1117")
 
-# Requirement 2: High contrast zoomed-in layout
-ax.set_xlim(-7, 7)
-ax.set_ylim(-7, 7)
+ax.set_xlim(-6, 6)
+ax.set_ylim(-6, 6)
 ax.set_aspect('equal')
 
 # Cartesian Background Grid
@@ -199,31 +210,48 @@ ax.tick_params(colors='white')
 target = st.session_state.target
 ax.plot(target[0], target[1], marker='*', markersize=20, color='#ff0055', markeredgecolor='white', label="Target", zorder=6)
 
-# Requirement 2 & 5: Expanded Zoomed Intersecting Polar Grids
-angles_36 = np.radians(np.arange(10, 370, 10))
+# Requirement 4: Configurable Polar Density angles
+step = st.session_state.grid_density
+angles_grid = np.radians(np.arange(step, 360 + step, step))
 ship_colors = {'A': '#00d2ff', 'B': '#ff9900', 'C': '#00ff66'}
 
 for name, origin in st.session_state.origins.items():
     color = ship_colors[name]
     
-    # Requirement 1: Lattice Point Ships
-    ax.plot(origin[0], origin[1], 'o', color=color, markersize=8, zorder=5)
-    ax.text(origin[0] + 0.2, origin[1] + 0.2, f"Ship {name} ({int(origin[0])}, {int(origin[1])})", 
+    # Requirement 1: Draw Ship Point without explicitly printing coordinates
+    ship_point, = ax.plot(origin[0], origin[1], 'o', color=color, markersize=8, zorder=5)
+    
+    # Requirement 1: Hide explicit text coordinates. Display label and interactive hover annotation
+    ax.text(origin[0] + 0.15, origin[1] + 0.15, f"Ship {name}", 
             color=color, fontweight='bold', fontsize=11, zorder=5)
     
-    # Concentric circles expanded up to radius 3
+    # Annotation box shown on hover (Matplotlib annotation)
+    annot = ax.annotate(f"Ship {name}: ({int(origin[0])}, {int(origin[1])})", 
+                        xy=(origin[0], origin[1]), xytext=(15, 15),
+                        textcoords="offset points", bbox=dict(boxstyle="round,pad=0.3", fc="#161b22", ec=color, lw=1.5),
+                        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0", color=color),
+                        color="white", fontsize=10, zorder=10)
+    annot.get_bbox_patch().set_alpha(0.85)
+
+    # Requirement 2: Initial unit vector visible at 1 cm length positioned horizontally
+    ax.quiver(origin[0], origin[1], 1.0, 0.0, 
+              angles='xy', scale_units='xy', scale=1, 
+              color=color, alpha=0.35, linestyle='--', width=0.006, zorder=4,
+              label=f"Initial v ({name})" if name == 'A' else "")
+
+    # Concentric circles at 1, 2, 3 cm
     for r in [1.0, 2.0, 3.0]:
         circle = plt.Circle((origin[0], origin[1]), r, color=color, fill=False, linestyle='-', alpha=0.4, linewidth=1.2)
         ax.add_patch(circle)
         
-    # 36 Radial Poles separated by 10°
-    for theta in angles_36:
+    # Radial Poles based on selected angular separation
+    for theta in angles_grid:
         dx = 3.0 * np.cos(theta)
         dy = 3.0 * np.sin(theta)
         ax.plot([origin[0], origin[0] + dx], [origin[1], origin[1] + dy], 
                 color=color, linestyle=':', linewidth=0.6, alpha=0.35)
 
-# Render Torpedo Trajectories
+# Render Fired Torpedo Trajectories
 for name, vec in st.session_state.shots.items():
     if vec is not None:
         start = st.session_state.origins[name]
@@ -231,7 +259,7 @@ for name, vec in st.session_state.shots.items():
                   angles='xy', scale_units='xy', scale=1, 
                   color=ship_colors[name], label=f"Torpedo {name}", width=0.01, zorder=5)
 
-ax.set_title("Zoomed Intersecting Polar Coordinates Grid", color="white", fontsize=14, pad=12)
+ax.set_title(f"Naval Coordinates Grid (Polar Separation: {step}°)", color="white", fontsize=14, pad=12)
 for spine in ax.spines.values():
     spine.set_color('#444444')
 ax.legend(loc='upper right', facecolor='#161b22', edgecolor='#30363d', labelcolor='white')
