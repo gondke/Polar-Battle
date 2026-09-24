@@ -8,7 +8,7 @@ from fractions import Fraction
 # =========================================================
 st.set_page_config(page_title="Naval Torpedo Targeting Game", layout="wide")
 
-# Custom CSS for compact sidebar inputs
+# Custom CSS for compact sidebar
 st.markdown("""
 <style>
     [data-testid="stSidebar"] {
@@ -16,13 +16,6 @@ st.markdown("""
     }
     .stSelectbox, .stRadio, .stSlider {
         margin-bottom: -10px;
-    }
-    .latex-box {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 6px;
-        padding: 8px;
-        margin-top: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -57,16 +50,34 @@ def fmt_math(val):
         return rf"\frac{{{frac.numerator}}}{{{frac.denominator}}}"
 
 # =========================================================
-# GAME STATE INITIALIZATION
+# RANDOM GENERATION LOGIC FOR SHIPS & TARGET
 # =========================================================
+def generate_random_origins():
+    """Generates random lattice (integer) positions for Ships A, B, and C."""
+    coords = [
+        np.array([-2.0, 0.0]), np.array([2.0, 0.0]), np.array([0.0, 2.0]),
+        np.array([-3.0, 1.0]), np.array([1.0, -2.0]), np.array([-1.0, -2.0]),
+        np.array([0.0, -2.0]), np.array([3.0, 1.0]), np.array([-2.0, 2.0])
+    ]
+    # Randomly pick 3 distinct origin set candidates
+    shift = np.random.randint(-2, 3, size=2)
+    base_idx = np.random.choice(len(coords), size=3, replace=False)
+    
+    origins = {
+        'A': np.array([float(coords[base_idx[0]][0] + shift[0]), float(coords[base_idx[0]][1] + shift[1])]),
+        'B': np.array([float(coords[base_idx[1]][0] + shift[0]), float(coords[base_idx[1]][1] + shift[1])]),
+        'C': np.array([float(coords[base_idx[2]][0] + shift[0]), float(coords[base_idx[2]][1] + shift[1])])
+    }
+    return origins
+
 def generate_target_in_range_all(origins):
     """
-    Requirement 2: Generates target such that it is positioned randomly
-    at an integer distance (1, 2, or 3 cm) from ALL THREE ships simultaneously.
+    Generates target positioned randomly at an integer distance (1, 2, or 3 cm)
+    from ALL THREE ships simultaneously.
     """
-    keys = list(origins.keys())
-    while True:
-        # Pick ship A as reference and an angle in steps of 10 degrees
+    attempts = 0
+    while attempts < 2000:
+        attempts += 1
         ref = origins['A']
         r_a = np.random.choice([1.0, 2.0, 3.0])
         theta_deg = np.random.choice(np.arange(10, 370, 10))
@@ -74,37 +85,32 @@ def generate_target_in_range_all(origins):
         
         target_pos = ref + np.array([r_a * np.cos(theta_rad), r_a * np.sin(theta_rad)])
         
-        # Calculate distances to B and C
         d_b = np.linalg.norm(target_pos - origins['B'])
         d_c = np.linalg.norm(target_pos - origins['C'])
         
-        # Verify if distances to B and C are integers in {1, 2, 3}
-        is_int_b = abs(d_b - round(d_b)) < 1e-3 and 1.0 <= round(d_b) <= 3.0
-        is_int_c = abs(d_c - round(d_c)) < 1e-3 and 1.0 <= round(d_c) <= 3.0
+        is_int_b = abs(d_b - round(d_b)) < 1e-2 and 1.0 <= round(d_b) <= 3.0
+        is_int_c = abs(d_c - round(d_c)) < 1e-2 and 1.0 <= round(d_c) <= 3.0
         
         if is_int_b and is_int_c:
             return target_pos
 
-if 'game_initialized' not in st.session_state:
-    st.session_state.origins = {
-        'A': np.array([-2.0, 0.0]),
-        'B': np.array([2.0, 0.0]),
-        'C': np.array([0.0, 2.0])
-    }
-    
+    # Fallback solver if tight configuration fails
+    return origins['A'] + np.array([2.0, 0.0])
+
+def setup_new_game():
+    """Generates completely NEW random ships and a NEW random target."""
+    st.session_state.origins = generate_random_origins()
     st.session_state.target = generate_target_in_range_all(st.session_state.origins)
     st.session_state.shots = {'A': None, 'B': None, 'C': None}
     st.session_state.game_status = "IN_PROGRESS"
     st.session_state.selected_ship = 'A'
+
+if 'game_initialized' not in st.session_state:
+    setup_new_game()
     st.session_state.game_initialized = True
 
-def reset_game():
-    st.session_state.target = generate_target_in_range_all(st.session_state.origins)
-    st.session_state.shots = {'A': None, 'B': None, 'C': None}
-    st.session_state.game_status = "IN_PROGRESS"
-
 # =========================================================
-# HEADER & GAME ALERT STATUS
+# HEADER & GAME STATUS
 # =========================================================
 st.title("🎯 2D Vector Rotation Naval Game")
 
@@ -114,15 +120,13 @@ elif st.session_state.game_status == "LOST":
     st.error("💥 All 3 torpedoes missed the target. Game Over!")
 
 # =========================================================
-# COMPACT SIDEBAR INPUT CONTROLS (REQUIREMENT 4)
+# COMPACT SIDEBAR INPUT CONTROLS
 # =========================================================
 st.sidebar.subheader("🕹️ Fire Control Panel")
 
-# Row 1: Ship Selection & Grid Density in side-by-side compact columns
 col_s1, col_s2 = st.sidebar.columns(2)
 
 available_origins = [k for k, v in st.session_state.shots.items() if v is None]
-default_idx = 0
 
 with col_s1:
     if available_origins and st.session_state.game_status == "IN_PROGRESS":
@@ -135,7 +139,6 @@ with col_s1:
 with col_s2:
     grid_density = st.selectbox("Density:", [10, 20, 30, 60, 90], index=0, help="Grid separation (°)")
 
-# Row 2: Angle & Matrix Selector in compact columns
 col_m1, col_m2 = st.sidebar.columns(2)
 
 with col_m1:
@@ -146,14 +149,12 @@ with col_m1:
 with col_m2:
     transform_type = st.radio("Matrix:", ["Matrix A", "Transpose Aᵀ"], horizontal=True)
 
-# Row 3: Vector Length slider
 vector_len = st.sidebar.slider("Vector Length (cm):", 1.0, 3.0, 1.0, step=0.5)
 
 # Calculate Transformation Matrices
 cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
 base_vector = np.array([vector_len, 0.0])
 
-# Specific Matrix naming based on selected origin
 matrix_names = {'A': r"A_{\theta}", 'B': r"B_{\phi}", 'C': r"C_{\alpha}"}
 mat_symbol = matrix_names.get(chosen_origin, "A")
 
@@ -165,9 +166,7 @@ else:
 
 fired_vector = rot_matrix @ base_vector
 
-# =========================================================
-# TEXTBOOK LATEX LIVE CALCULATION DISPLAY (REQUIREMENT 5)
-# =========================================================
+# Live LaTeX Transformation
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🧮 Live Textbook Transformation:**")
 
@@ -205,17 +204,17 @@ with col_btn1:
 
 with col_btn2:
     if st.button("🔄 Reset", use_container_width=True):
-        reset_game()
+        setup_new_game()
         st.rerun()
 
 # =========================================================
-# HIGH-CONTRAST PLOTTING & ACTIVE GRID HIGHLIGHTING (REQ 1 & 3)
+# HIGH-CONTRAST PLOTTING & DYNAMIC HIGHLIGHTING
 # =========================================================
 fig, ax = plt.subplots(figsize=(8.5, 8.5), facecolor="#0e1117")
 ax.set_facecolor("#0e1117")
 
-ax.set_xlim(-6, 6)
-ax.set_ylim(-6, 6)
+ax.set_xlim(-7, 7)
+ax.set_ylim(-7, 7)
 ax.set_aspect('equal')
 
 # Gridlines
@@ -233,20 +232,18 @@ ax.plot(target[0], target[1], marker='*', markersize=22, color='#ff0055', marker
 angles_grid = np.radians(np.arange(grid_density, 360 + grid_density, grid_density))
 ship_colors = {'A': '#00d2ff', 'B': '#ff9900', 'C': '#00ff66'}
 
-# Plot origins and polar grids with dynamic opacity
+# Draw Ships and Polar Grids
 for name, origin in st.session_state.origins.items():
     color = ship_colors[name]
-    
-    # Requirement 3: Highlight active ship grid, fade out unselected ships
     is_selected = (name == st.session_state.selected_ship)
     line_alpha = 0.85 if is_selected else 0.12
     circle_alpha = 0.90 if is_selected else 0.15
     
-    # Requirement 1: Hide explicit coordinates text. Show only Ship name & Hover annotation
+    # Hide coordinates text. Show on hover annotation
     ax.plot(origin[0], origin[1], 'o', color=color, markersize=9, zorder=5)
     ax.text(origin[0] + 0.15, origin[1] + 0.15, f"Ship {name}", color=color, fontweight='bold', fontsize=11, zorder=5)
     
-    # Interactive hover annotation box showing integer coordinates
+    # Hover Annotation Box
     annot = ax.annotate(f"Ship {name}: ({int(origin[0])}, {int(origin[1])})", 
                         xy=(origin[0], origin[1]), xytext=(15, 15),
                         textcoords="offset points", 
@@ -255,7 +252,7 @@ for name, origin in st.session_state.origins.items():
                         color="white", fontsize=10, zorder=10)
     annot.get_bbox_patch().set_alpha(0.85)
 
-    # Initial horizontal vector (1 cm)
+    # Initial horizontal vector
     ax.quiver(origin[0], origin[1], 1.0, 0.0, 
               angles='xy', scale_units='xy', scale=1, 
               color=color, alpha=0.4 if is_selected else 0.15, linestyle='--', width=0.006, zorder=4)
