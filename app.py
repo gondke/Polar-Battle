@@ -201,14 +201,17 @@ with col_btn2:
         st.rerun()
 
 # =========================================================
-# HIGH-CONTRAST PLOTTING (COORDINATES COMPLETELY HIDDEN)
+# HIGH-CONTRAST PLOTTING (FIXED FRAME + THIN MULTI-COLOR VECTOR)
 # =========================================================
 fig, ax = plt.subplots(figsize=(8.5, 8.5), facecolor="#0e1117")
 ax.set_facecolor("#0e1117")
 
-ax.set_xlim(-7, 7)
-ax.set_ylim(-7, 7)
+# FIX 1: Lock fixed coordinate boundaries to prevent zoom-in/zoom-out on slider change
+FRAME_LIMIT = 10.0
+ax.set_xlim(-FRAME_LIMIT, FRAME_LIMIT)
+ax.set_ylim(-FRAME_LIMIT, FRAME_LIMIT)
 ax.set_aspect('equal')
+ax.autoscale(False)
 
 # Gridlines
 ax.grid(True, which='both', color='#262730', linestyle='--', linewidth=0.8)
@@ -232,14 +235,9 @@ for name, origin in st.session_state.origins.items():
     line_alpha = 0.85 if is_selected else 0.12
     circle_alpha = 0.90 if is_selected else 0.15
     
-    # Draw Ship Point and Name ONLY (NO COORDINATES TEXT DISPLAYED)
+    # Draw Ship Point and Name ONLY (Coordinates hidden)
     ax.plot(origin[0], origin[1], 'o', color=color, markersize=9, zorder=5)
     ax.text(origin[0] + 0.15, origin[1] + 0.15, f"Ship {name}", color=color, fontweight='bold', fontsize=11, zorder=5)
-
-    # Initial horizontal vector
-    ax.quiver(origin[0], origin[1], 1.0, 0.0, 
-              angles='xy', scale_units='xy', scale=1, 
-              color=color, alpha=0.4 if is_selected else 0.15, linestyle='--', width=0.006, zorder=4)
 
     # Concentric circles
     for r in [1.0, 2.0, 3.0]:
@@ -254,13 +252,22 @@ for name, origin in st.session_state.origins.items():
         ax.plot([origin[0], origin[0] + dx], [origin[1], origin[1] + dy], 
                 color=color, linestyle=':', linewidth=0.8 if is_selected else 0.4, alpha=line_alpha)
 
+# FIX 2 & 3: Live Preview Vector in High-Contrast Magenta with a THIN line profile
+if st.session_state.game_status == "IN_PROGRESS" and chosen_origin:
+    active_origin = st.session_state.origins[chosen_origin]
+    ax.quiver(active_origin[0], active_origin[1], fired_vector[0], fired_vector[1],
+              angles='xy', scale_units='xy', scale=1,
+              color='#ff00ff', label=f"Preview {chosen_origin}",
+              width=0.005, headwidth=3.5, headlength=4.5, zorder=7)
+
 # Render Fired Torpedo Vectors
 for name, vec in st.session_state.shots.items():
     if vec is not None:
         start = st.session_state.origins[name]
         ax.quiver(start[0], start[1], vec[0], vec[1], 
                   angles='xy', scale_units='xy', scale=1, 
-                  color=ship_colors[name], label=f"Torpedo {name}", width=0.012, zorder=5)
+                  color='#ffff00', label=f"Fired {name}",
+                  width=0.006, headwidth=4, headlength=5, zorder=8)
 
 ax.set_title(f"Naval Grid (Active Focus: Ship {st.session_state.selected_ship})", color="white", fontsize=14, pad=10)
 for spine in ax.spines.values():
