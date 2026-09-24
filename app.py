@@ -8,7 +8,7 @@ from fractions import Fraction
 # =========================================================
 st.set_page_config(page_title="Naval Torpedo Targeting Game", layout="wide")
 
-# Custom CSS for compact sidebar
+# Custom CSS for compact layout
 st.markdown("""
 <style>
     [data-testid="stSidebar"] {
@@ -59,7 +59,6 @@ def generate_random_origins():
         np.array([-3.0, 1.0]), np.array([1.0, -2.0]), np.array([-1.0, -2.0]),
         np.array([0.0, -2.0]), np.array([3.0, 1.0]), np.array([-2.0, 2.0])
     ]
-    # Randomly pick 3 distinct origin set candidates
     shift = np.random.randint(-2, 3, size=2)
     base_idx = np.random.choice(len(coords), size=3, replace=False)
     
@@ -71,10 +70,7 @@ def generate_random_origins():
     return origins
 
 def generate_target_in_range_all(origins):
-    """
-    Generates target positioned randomly at an integer distance (1, 2, or 3 cm)
-    from ALL THREE ships simultaneously.
-    """
+    """Generates target positioned randomly at an integer distance from ALL THREE ships."""
     attempts = 0
     while attempts < 2000:
         attempts += 1
@@ -94,11 +90,9 @@ def generate_target_in_range_all(origins):
         if is_int_b and is_int_c:
             return target_pos
 
-    # Fallback solver if tight configuration fails
     return origins['A'] + np.array([2.0, 0.0])
 
 def setup_new_game():
-    """Generates completely NEW random ships and a NEW random target."""
     st.session_state.origins = generate_random_origins()
     st.session_state.target = generate_target_in_range_all(st.session_state.origins)
     st.session_state.shots = {'A': None, 'B': None, 'C': None}
@@ -125,7 +119,6 @@ elif st.session_state.game_status == "LOST":
 st.sidebar.subheader("🕹️ Fire Control Panel")
 
 col_s1, col_s2 = st.sidebar.columns(2)
-
 available_origins = [k for k, v in st.session_state.shots.items() if v is None]
 
 with col_s1:
@@ -208,7 +201,7 @@ with col_btn2:
         st.rerun()
 
 # =========================================================
-# HIGH-CONTRAST PLOTTING & DYNAMIC HIGHLIGHTING
+# HIGH-CONTRAST PLOTTING (COORDINATES COMPLETELY HIDDEN)
 # =========================================================
 fig, ax = plt.subplots(figsize=(8.5, 8.5), facecolor="#0e1117")
 ax.set_facecolor("#0e1117")
@@ -239,18 +232,9 @@ for name, origin in st.session_state.origins.items():
     line_alpha = 0.85 if is_selected else 0.12
     circle_alpha = 0.90 if is_selected else 0.15
     
-    # Hide coordinates text. Show on hover annotation
+    # Draw Ship Point and Name ONLY (NO COORDINATES TEXT DISPLAYED)
     ax.plot(origin[0], origin[1], 'o', color=color, markersize=9, zorder=5)
     ax.text(origin[0] + 0.15, origin[1] + 0.15, f"Ship {name}", color=color, fontweight='bold', fontsize=11, zorder=5)
-    
-    # Hover Annotation Box
-    annot = ax.annotate(f"Ship {name}: ({int(origin[0])}, {int(origin[1])})", 
-                        xy=(origin[0], origin[1]), xytext=(15, 15),
-                        textcoords="offset points", 
-                        bbox=dict(boxstyle="round,pad=0.3", fc="#161b22", ec=color, lw=1.5),
-                        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0", color=color),
-                        color="white", fontsize=10, zorder=10)
-    annot.get_bbox_patch().set_alpha(0.85)
 
     # Initial horizontal vector
     ax.quiver(origin[0], origin[1], 1.0, 0.0, 
