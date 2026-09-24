@@ -8,11 +8,30 @@ from fractions import Fraction
 # =========================================================
 st.set_page_config(page_title="Naval Torpedo Targeting Game", layout="wide")
 
+# Custom CSS for compact sidebar inputs
+st.markdown("""
+<style>
+    [data-testid="stSidebar"] {
+        padding-top: 1rem;
+    }
+    .stSelectbox, .stRadio, .stSlider {
+        margin-bottom: -10px;
+    }
+    .latex-box {
+        background-color: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        padding: 8px;
+        margin-top: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # =========================================================
 # HELPER FUNCTIONS FOR LATEX FORMATTING
 # =========================================================
 def fmt_math(val):
-    """Format common trigonometric values cleanly into LaTeX expressions."""
+    """Format trigonometric values into clean textbook LaTeX strings."""
     if abs(val) < 1e-5:
         return "0"
     elif abs(val - 1.0) < 1e-5:
@@ -40,226 +59,229 @@ def fmt_math(val):
 # =========================================================
 # GAME STATE INITIALIZATION
 # =========================================================
-def generate_valid_target(origins):
+def generate_target_in_range_all(origins):
     """
-    Requirement 3: Generates target such that with respect to EACH ship,
-    it is at an exact integer distance (1 cm, 2 cm, or 3 cm) and within range (<= 3 cm).
+    Requirement 2: Generates target such that it is positioned randomly
+    at an integer distance (1, 2, or 3 cm) from ALL THREE ships simultaneously.
     """
-    origin_keys = list(origins.keys())
+    keys = list(origins.keys())
     while True:
-        # Pick reference ship and an integer radius in {1, 2, 3} cm
-        ref_ship = origins['A']
+        # Pick ship A as reference and an angle in steps of 10 degrees
+        ref = origins['A']
         r_a = np.random.choice([1.0, 2.0, 3.0])
         theta_deg = np.random.choice(np.arange(10, 370, 10))
         theta_rad = np.radians(theta_deg)
         
-        target_pos = ref_ship + np.array([r_a * np.cos(theta_rad), r_a * np.sin(theta_rad)])
+        target_pos = ref + np.array([r_a * np.cos(theta_rad), r_a * np.sin(theta_rad)])
         
-        # Check distance to all ships
-        dist_b = np.linalg.norm(target_pos - origins['B'])
-        dist_c = np.linalg.norm(target_pos - origins['C'])
+        # Calculate distances to B and C
+        d_b = np.linalg.norm(target_pos - origins['B'])
+        d_c = np.linalg.norm(target_pos - origins['C'])
         
-        # Check if dist_b and dist_c are integers within floating point tolerance and <= 3.0 cm
-        near_int_b = abs(dist_b - round(dist_b)) < 1e-3 and 1.0 <= round(dist_b) <= 3.0
-        near_int_c = abs(dist_c - round(dist_c)) < 1e-3 and 1.0 <= round(dist_c) <= 3.0
+        # Verify if distances to B and C are integers in {1, 2, 3}
+        is_int_b = abs(d_b - round(d_b)) < 1e-3 and 1.0 <= round(d_b) <= 3.0
+        is_int_c = abs(d_c - round(d_c)) < 1e-3 and 1.0 <= round(d_c) <= 3.0
         
-        if near_int_b and near_int_c:
+        if is_int_b and is_int_c:
             return target_pos
 
 if 'game_initialized' not in st.session_state:
-    st.session_state.grid_min = -10
-    st.session_state.grid_max = 10
-    
-    # Requirement 1: Ships positioned at lattice (integer) coordinates
-    # Selected geometry where a shared integer point exists for r in {1, 2, 3}
     st.session_state.origins = {
         'A': np.array([-2.0, 0.0]),
         'B': np.array([2.0, 0.0]),
         'C': np.array([0.0, 2.0])
     }
     
-    # Requirement 3: Position target at integer distance from ALL ships
-    st.session_state.target = generate_valid_target(st.session_state.origins)
+    st.session_state.target = generate_target_in_range_all(st.session_state.origins)
     st.session_state.shots = {'A': None, 'B': None, 'C': None}
     st.session_state.game_status = "IN_PROGRESS"
-    st.session_state.grid_density = 10  # Default 10 degrees separation
+    st.session_state.selected_ship = 'A'
     st.session_state.game_initialized = True
 
 def reset_game():
-    st.session_state.target = generate_valid_target(st.session_state.origins)
+    st.session_state.target = generate_target_in_range_all(st.session_state.origins)
     st.session_state.shots = {'A': None, 'B': None, 'C': None}
     st.session_state.game_status = "IN_PROGRESS"
 
 # =========================================================
-# UI HEADER & GAME STATUS
+# HEADER & GAME ALERT STATUS
 # =========================================================
 st.title("🎯 2D Vector Rotation Naval Game")
-st.write("Understand orthogonal matrix transformations: select a ship, angle, and matrix type to fire at the target star.")
 
 if st.session_state.game_status == "WON":
     st.success("🎉 Direct Hit! You WON the game!")
 elif st.session_state.game_status == "LOST":
-    st.error("💥 All 3 torpedoes missed or failed to hit the target. Game Over!")
-
-st.button("Reset / New Target", on_click=reset_game)
+    st.error("💥 All 3 torpedoes missed the target. Game Over!")
 
 # =========================================================
-# SIDEBAR CONTROLS
+# COMPACT SIDEBAR INPUT CONTROLS (REQUIREMENT 4)
 # =========================================================
-st.sidebar.header("Firing Control System")
+st.sidebar.subheader("🕹️ Fire Control Panel")
 
-# Requirement 4: Provision to change grid density
-angular_separation = st.sidebar.selectbox(
-    "⚙️ Polar Grid Angular Separation:",
-    options=[10, 20, 30, 60, 90],
-    index=0,
-    help="Changes the density of polar grid radial poles."
-)
-st.session_state.grid_density = angular_separation
+# Row 1: Ship Selection & Grid Density in side-by-side compact columns
+col_s1, col_s2 = st.sidebar.columns(2)
 
 available_origins = [k for k, v in st.session_state.shots.items() if v is None]
+default_idx = 0
 
-if available_origins and st.session_state.game_status == "IN_PROGRESS":
-    chosen_origin = st.sidebar.selectbox("1. Select Ready Ship (Origin):", available_origins)
-    
-    # Dropdown menu for angle from 10° to 360° in steps of 10°
-    angle_options = list(range(10, 370, 10))
-    angle_deg = st.sidebar.selectbox("2. Select Rotation Angle θ (degrees):", options=angle_options, index=8)
-    angle_rad = np.radians(angle_deg)
-    
-    # Matrix choice (A vs A^T)
-    transform_type = st.sidebar.radio(
-        "3. Choose Orthogonal Transformation Matrix:",
-        ["Standard Matrix A", "Transpose Matrix Aᵀ"]
-    )
-    
-    # Requirement 2: Vector initial default length is 1 cm (user can adjust up to 3 cm)
-    vector_len = st.sidebar.slider("4. Torpedo Vector Length (cm):", 1.0, 3.0, 1.0, step=0.5)
-
-    # Calculate Matrix & Vector Transformation
-    cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
-    
-    # Requirement 2: Initial vector positioned horizontally (parallel to relative horizontal axis)
-    base_vector = np.array([vector_len, 0.0])
-    
-    if transform_type == "Standard Matrix A":
-        # Matrix A = [[cos theta, -sin theta], [sin theta, cos theta]]
-        rot_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
-        matrix_sym = "A"
+with col_s1:
+    if available_origins and st.session_state.game_status == "IN_PROGRESS":
+        chosen_origin = st.selectbox("Ship:", available_origins, key="ship_select")
+        st.session_state.selected_ship = chosen_origin
     else:
-        # Transpose A^T = [[cos theta, sin theta], [-sin theta, cos theta]]
-        rot_matrix = np.array([[cos_a, sin_a], [-sin_a, cos_a]])
-        matrix_sym = "A^{T}"
+        chosen_origin = st.session_state.selected_ship
+        st.write(f"Active: Ship {chosen_origin}")
 
-    fired_vector = rot_matrix @ base_vector
+with col_s2:
+    grid_density = st.selectbox("Density:", [10, 20, 30, 60, 90], index=0, help="Grid separation (°)")
 
-    # Display live LaTeX textbook matrix multiplication
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🧮 Live Matrix Calculation")
-    
-    m00, m01 = fmt_math(rot_matrix[0,0]), fmt_math(rot_matrix[0,1])
-    m10, m11 = fmt_math(rot_matrix[1,0]), fmt_math(rot_matrix[1,1])
-    vx, vy = fmt_math(base_vector[0]), fmt_math(base_vector[1])
-    rx, ry = fmt_math(fired_vector[0]), fmt_math(fired_vector[1])
+# Row 2: Angle & Matrix Selector in compact columns
+col_m1, col_m2 = st.sidebar.columns(2)
 
-    latex_str = f"""
-    $$
-    {matrix_sym} \\cdot \\mathbf{{v}} = 
-    \\begin{{bmatrix}} {m00} & {m01} \\\\ {m10} & {m11} \\end{{bmatrix}}
-    \\begin{{bmatrix}} {vx} \\\\ {vy} \\end{{bmatrix}}
-    =
-    \\begin{{bmatrix}} {rx} \\\\ {ry} \\end{{bmatrix}}
-    $$
-    """
-    st.sidebar.latex(latex_str)
+with col_m1:
+    angle_opts = list(range(10, 370, 10))
+    angle_deg = st.selectbox("Angle θ:", angle_opts, index=8)
+    angle_rad = np.radians(angle_deg)
 
-    if st.sidebar.button("🔥 FIRE TORPEDO"):
+with col_m2:
+    transform_type = st.radio("Matrix:", ["Matrix A", "Transpose Aᵀ"], horizontal=True)
+
+# Row 3: Vector Length slider
+vector_len = st.sidebar.slider("Vector Length (cm):", 1.0, 3.0, 1.0, step=0.5)
+
+# Calculate Transformation Matrices
+cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+base_vector = np.array([vector_len, 0.0])
+
+# Specific Matrix naming based on selected origin
+matrix_names = {'A': r"A_{\theta}", 'B': r"B_{\phi}", 'C': r"C_{\alpha}"}
+mat_symbol = matrix_names.get(chosen_origin, "A")
+
+if transform_type == "Matrix A":
+    rot_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+else:
+    rot_matrix = np.array([[cos_a, sin_a], [-sin_a, cos_a]])
+    mat_symbol += r"^{T}"
+
+fired_vector = rot_matrix @ base_vector
+
+# =========================================================
+# TEXTBOOK LATEX LIVE CALCULATION DISPLAY (REQUIREMENT 5)
+# =========================================================
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🧮 Live Textbook Transformation:**")
+
+m00, m01 = fmt_math(rot_matrix[0,0]), fmt_math(rot_matrix[0,1])
+m10, m11 = fmt_math(rot_matrix[1,0]), fmt_math(rot_matrix[1,1])
+vx, vy = fmt_math(base_vector[0]), fmt_math(base_vector[1])
+rx, ry = fmt_math(fired_vector[0]), fmt_math(fired_vector[1])
+
+latex_eq = rf"""
+$$
+{mat_symbol} \cdot \mathbf{{v}} = 
+\begin{{bmatrix}} {m00} & {m01} \\ {m10} & {m11} \end{{bmatrix}}
+\begin{{bmatrix}} {vx} \\ {vy} \end{{bmatrix}}
+=
+\begin{{bmatrix}} {rx} \\ {ry} \end{{bmatrix}}
+$$
+"""
+st.sidebar.latex(latex_eq)
+
+col_btn1, col_btn2 = st.sidebar.columns(2)
+with col_btn1:
+    if st.button("🔥 FIRE", use_container_width=True) and st.session_state.game_status == "IN_PROGRESS":
         st.session_state.shots[chosen_origin] = fired_vector
         
-        # Hit detection (Radius threshold = 0.4 units)
         origin_pos = st.session_state.origins[chosen_origin]
-        impact_point = origin_pos + fired_vector
-        distance_to_target = np.linalg.norm(impact_point - st.session_state.target)
+        impact = origin_pos + fired_vector
+        dist = np.linalg.norm(impact - st.session_state.target)
         
-        if distance_to_target <= 0.4:
+        if dist <= 0.4:
             st.session_state.game_status = "WON"
         elif all(v is not None for v in st.session_state.shots.values()):
             st.session_state.game_status = "LOST"
             
         st.rerun()
 
+with col_btn2:
+    if st.button("🔄 Reset", use_container_width=True):
+        reset_game()
+        st.rerun()
+
 # =========================================================
-# HIGH-CONTRAST PLOTTING & INTERSECTING POLAR GRIDS
+# HIGH-CONTRAST PLOTTING & ACTIVE GRID HIGHLIGHTING (REQ 1 & 3)
 # =========================================================
-fig, ax = plt.subplots(figsize=(10, 10), facecolor="#0e1117")
+fig, ax = plt.subplots(figsize=(8.5, 8.5), facecolor="#0e1117")
 ax.set_facecolor("#0e1117")
 
 ax.set_xlim(-6, 6)
 ax.set_ylim(-6, 6)
 ax.set_aspect('equal')
 
-# Cartesian Background Grid
+# Gridlines
 ax.grid(True, which='both', color='#262730', linestyle='--', linewidth=0.8)
-ax.axhline(0, color='#555555', linewidth=1.2)
-ax.axvline(0, color='#555555', linewidth=1.2)
+ax.axhline(0, color='#444444', linewidth=1.2)
+ax.axvline(0, color='#444444', linewidth=1.2)
 ax.set_xlabel("X (cm)", color="white")
 ax.set_ylabel("Y (cm)", color="white")
 ax.tick_params(colors='white')
 
 # Target (Red Star)
 target = st.session_state.target
-ax.plot(target[0], target[1], marker='*', markersize=20, color='#ff0055', markeredgecolor='white', label="Target", zorder=6)
+ax.plot(target[0], target[1], marker='*', markersize=22, color='#ff0055', markeredgecolor='white', label="Target", zorder=6)
 
-# Requirement 4: Configurable Polar Density angles
-step = st.session_state.grid_density
-angles_grid = np.radians(np.arange(step, 360 + step, step))
+angles_grid = np.radians(np.arange(grid_density, 360 + grid_density, grid_density))
 ship_colors = {'A': '#00d2ff', 'B': '#ff9900', 'C': '#00ff66'}
 
+# Plot origins and polar grids with dynamic opacity
 for name, origin in st.session_state.origins.items():
     color = ship_colors[name]
     
-    # Requirement 1: Draw Ship Point without explicitly printing coordinates
-    ship_point, = ax.plot(origin[0], origin[1], 'o', color=color, markersize=8, zorder=5)
+    # Requirement 3: Highlight active ship grid, fade out unselected ships
+    is_selected = (name == st.session_state.selected_ship)
+    line_alpha = 0.85 if is_selected else 0.12
+    circle_alpha = 0.90 if is_selected else 0.15
     
-    # Requirement 1: Hide explicit text coordinates. Display label and interactive hover annotation
-    ax.text(origin[0] + 0.15, origin[1] + 0.15, f"Ship {name}", 
-            color=color, fontweight='bold', fontsize=11, zorder=5)
+    # Requirement 1: Hide explicit coordinates text. Show only Ship name & Hover annotation
+    ax.plot(origin[0], origin[1], 'o', color=color, markersize=9, zorder=5)
+    ax.text(origin[0] + 0.15, origin[1] + 0.15, f"Ship {name}", color=color, fontweight='bold', fontsize=11, zorder=5)
     
-    # Annotation box shown on hover (Matplotlib annotation)
+    # Interactive hover annotation box showing integer coordinates
     annot = ax.annotate(f"Ship {name}: ({int(origin[0])}, {int(origin[1])})", 
                         xy=(origin[0], origin[1]), xytext=(15, 15),
-                        textcoords="offset points", bbox=dict(boxstyle="round,pad=0.3", fc="#161b22", ec=color, lw=1.5),
+                        textcoords="offset points", 
+                        bbox=dict(boxstyle="round,pad=0.3", fc="#161b22", ec=color, lw=1.5),
                         arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0", color=color),
                         color="white", fontsize=10, zorder=10)
     annot.get_bbox_patch().set_alpha(0.85)
 
-    # Requirement 2: Initial unit vector visible at 1 cm length positioned horizontally
+    # Initial horizontal vector (1 cm)
     ax.quiver(origin[0], origin[1], 1.0, 0.0, 
               angles='xy', scale_units='xy', scale=1, 
-              color=color, alpha=0.35, linestyle='--', width=0.006, zorder=4,
-              label=f"Initial v ({name})" if name == 'A' else "")
+              color=color, alpha=0.4 if is_selected else 0.15, linestyle='--', width=0.006, zorder=4)
 
-    # Concentric circles at 1, 2, 3 cm
+    # Concentric circles
     for r in [1.0, 2.0, 3.0]:
-        circle = plt.Circle((origin[0], origin[1]), r, color=color, fill=False, linestyle='-', alpha=0.4, linewidth=1.2)
+        circle = plt.Circle((origin[0], origin[1]), r, color=color, fill=False, 
+                            linestyle='-', alpha=circle_alpha, linewidth=1.4 if is_selected else 0.8)
         ax.add_patch(circle)
         
-    # Radial Poles based on selected angular separation
+    # Radial lines
     for theta in angles_grid:
         dx = 3.0 * np.cos(theta)
         dy = 3.0 * np.sin(theta)
         ax.plot([origin[0], origin[0] + dx], [origin[1], origin[1] + dy], 
-                color=color, linestyle=':', linewidth=0.6, alpha=0.35)
+                color=color, linestyle=':', linewidth=0.8 if is_selected else 0.4, alpha=line_alpha)
 
-# Render Fired Torpedo Trajectories
+# Render Fired Torpedo Vectors
 for name, vec in st.session_state.shots.items():
     if vec is not None:
         start = st.session_state.origins[name]
         ax.quiver(start[0], start[1], vec[0], vec[1], 
                   angles='xy', scale_units='xy', scale=1, 
-                  color=ship_colors[name], label=f"Torpedo {name}", width=0.01, zorder=5)
+                  color=ship_colors[name], label=f"Torpedo {name}", width=0.012, zorder=5)
 
-ax.set_title(f"Naval Coordinates Grid (Polar Separation: {step}°)", color="white", fontsize=14, pad=12)
+ax.set_title(f"Naval Grid (Active Focus: Ship {st.session_state.selected_ship})", color="white", fontsize=14, pad=10)
 for spine in ax.spines.values():
     spine.set_color('#444444')
 ax.legend(loc='upper right', facecolor='#161b22', edgecolor='#30363d', labelcolor='white')
